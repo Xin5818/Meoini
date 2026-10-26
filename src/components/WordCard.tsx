@@ -26,6 +26,7 @@ export function WordCard({ entry, onSaveMeaning, savingIndex }: WordCardProps) {
           ipa={entry.pronunciation}
           ipaSource={entry.pronunciationSource}
           audioUrl={entry.pronunciationAudioUrl}
+          pronunciations={entry.pronunciations}
         />
         {entry.source && (
           <p className="mt-1 text-xs text-slate-400">

@@ -31,7 +31,9 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,ico,svg,woff2}"],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/api\.dictionaryapi\.dev\/.*/i,
+            // Cache dictionary JSON only. Pronunciation media is streamed but is
+            // not stored offline until its redistribution/cache license is confirmed.
+            urlPattern: /^https:\/\/api\.dictionaryapi\.dev\/api\/v2\/entries\/.*/i,
             handler: "NetworkFirst",
             options: {
               cacheName: "dictionary-api",

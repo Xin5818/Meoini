@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  playPronunciation as startPronunciationPlayback,
+  type PronunciationState,
+} from "../features/dictionary/services/pronunciationService";
+import { getFinnishPronunciationGuidance } from "../features/dictionary/pronunciationGuidance";
+import type { Pronunciation } from "../types/word";
 
 interface PronunciationPanelProps {
   word: string;
@@ -6,12 +12,8 @@ interface PronunciationPanelProps {
   ipa?: string;
   ipaSource?: string;
   audioUrl?: string;
+  pronunciations?: Pronunciation[];
 }
-
-const FINNISH_SOURCES = {
-  stress: "https://unstats.un.org/unsd/geoinfo/UNGEGN/docs/22-GEGN-Docs/wp/gegn22wp49.pdf",
-  vowels: "https://eurphon.info/languages/html?lang_id=27",
-};
 
 export function PronunciationPanel({
   word,
@@ -19,78 +21,36 @@ export function PronunciationPanel({
   ipa,
   ipaSource,
   audioUrl,
+  pronunciations = [],
 }: PronunciationPanelProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const fallbackStarted = useRef(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [message, setMessage] = useState("");
+  const cancelPlayback = useRef<(() => void) | undefined>(undefined);
+  const [playback, setPlayback] = useState<PronunciationState | null>(null);
   const isFinnish = language === "fi";
+  const speaking = playback?.status === "loading" || playback?.status === "playing";
+  const guidance = isFinnish ? getFinnishPronunciationGuidance(word) : null;
+  const records = pronunciations.length ? pronunciations : [{
+    ipa: ipa ? [ipa] : undefined,
+    audioUrl,
+    source: ipaSource,
+  }];
+  const availableAudio = records.find((record) => record.audioUrl)?.audioUrl ?? audioUrl;
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
-
-  function speakWithBrowser() {
-    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
-      setSpeaking(false);
-      setMessage("词典音频不可用；当前浏览器不支持语音合成。");
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(word);
-    utterance.lang = isFinnish ? "fi-FI" : language;
-    const voices = window.speechSynthesis.getVoices();
-    const languageVoice = voices.find((voice) =>
-      voice.lang.toLocaleLowerCase().startsWith(isFinnish ? "fi" : language.toLocaleLowerCase()),
-    );
-    if (isFinnish && voices.length > 0 && !languageVoice) {
-      setSpeaking(false);
-      setMessage("当前设备没有可用的芬兰语语音；请安装 fi-FI 语音后重试。");
-      return;
-    }
-    if (languageVoice) utterance.voice = languageVoice;
-    utterance.onstart = () => {
-      setSpeaking(true);
-      setMessage(`正在播放浏览器语音合成（${isFinnish ? "fi-FI" : language}），不是词典原音。`);
-    };
-    utterance.onend = () => {
-      setSpeaking(false);
-      setMessage("浏览器语音合成播放完成。");
-    };
-    utterance.onerror = () => {
-      setSpeaking(false);
-      setMessage("浏览器语音合成失败；请检查设备是否安装芬兰语语音。");
-    };
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-  }
+  useEffect(() => () => cancelPlayback.current?.(), [word, availableAudio]);
 
   function playPronunciation() {
     if (speaking) {
-      audioRef.current?.pause();
-      window.speechSynthesis?.cancel();
-      setSpeaking(false);
-      setMessage("");
+      cancelPlayback.current?.();
+      cancelPlayback.current = undefined;
+      setPlayback(null);
       return;
     }
-
-    fallbackStarted.current = false;
-    setMessage(audioUrl ? "正在加载词典原音…" : "正在尝试浏览器语音合成…");
-    if (audioUrl && audioRef.current) {
-      audioRef.current.currentTime = 0;
-      void audioRef.current.play().catch(() => useSpeechFallback());
-    } else {
-      speakWithBrowser();
-    }
+    cancelPlayback.current = startPronunciationPlayback(
+      { text: word, language, audioUrl: availableAudio },
+      setPlayback,
+    );
   }
 
-  function useSpeechFallback() {
-    if (fallbackStarted.current) return;
-    fallbackStarted.current = true;
-    setSpeaking(false);
-    setMessage("词典原音不可播放，正在尝试浏览器语音合成…");
-    speakWithBrowser();
-  }
-
-  const showPanel = isFinnish || Boolean(audioUrl || ipa);
+  const showPanel = isFinnish || Boolean(audioUrl || ipa || pronunciations.length);
   if (!showPanel) return null;
 
   return (
@@ -105,41 +65,43 @@ export function PronunciationPanel({
           <SpeakerIcon />
           {speaking ? "停止播放" : "学习发音"}
         </button>
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">IPA</p>
-          {ipa ? (
-            <p className="font-mono text-lg text-slate-900">{ipa}</p>
-          ) : (
-            <p className="text-sm text-slate-500">暂无音标</p>
-          )}
-        </div>
-        {ipa && ipaSource && (
-          <p className="text-xs text-slate-500">音标来源：{ipaSource}</p>
+        {!records.some((record) => record.ipa?.length) && (
+          <p className="text-sm text-slate-500">暂无音标</p>
         )}
       </div>
 
-      {audioUrl && (
-        <audio
-          ref={audioRef}
-          src={audioUrl}
-          preload="none"
-          className="hidden"
-          onPlay={() => {
-            setSpeaking(true);
-            setMessage("正在播放词典原音。");
-          }}
-          onEnded={() => {
-            setSpeaking(false);
-            setMessage("词典原音播放完成。");
-          }}
-          onError={useSpeechFallback}
-        />
+      {playback && (
+        <p className="mt-2 text-xs text-slate-600" role="status" aria-live="polite">
+          {playback.message}
+        </p>
       )}
 
-      {message && (
-        <p className="mt-2 text-xs text-slate-600" role="status" aria-live="polite">
-          {message}
-        </p>
+      {records.some((record) => record.ipa?.length || record.syllabification) && (
+        <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+          {records.some((record) => record.ipa?.length) && (
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">IPA</p>
+          )}
+          {records.map((record, index) => (
+            <div key={`${record.sourceUrl ?? record.source ?? "pronunciation"}-${index}`}>
+              {record.ipa?.map((value) => (
+                <p key={value} className="font-mono text-lg text-slate-900">{value}</p>
+              ))}
+              {record.syllabification && (
+                <p className="text-sm text-slate-600">音节划分：<span className="font-mono">{record.syllabification}</span></p>
+              )}
+              {record.sourceUrl && (
+                <p className="text-xs text-slate-500">
+                  发音资料来源：<SourceLink href={record.sourceUrl}>{record.source ?? "词典"}</SourceLink>
+                </p>
+              )}
+              {record.audioSourceUrl && (
+                <p className="text-xs text-slate-500">
+                  音频来源：<SourceLink href={record.audioSourceUrl}>{record.audioSource ?? "词典音频"}</SourceLink>
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       {isFinnish && (
@@ -147,21 +109,15 @@ export function PronunciationPanel({
           <h3 className="text-sm font-semibold text-slate-800">发音提示</h3>
           <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm text-slate-600">
             <li>
-              芬兰语主重音落在第一个音节。
-              <SourceLink href={FINNISH_SOURCES.stress}>UNGEGN 芬兰地名发音资料</SourceLink>
+              {guidance?.stress.text}
+              <SourceLink href={guidance!.stress.sourceUrl}>{guidance!.stress.source}</SourceLink>
             </li>
-            {word.toLocaleLowerCase().includes("y") && (
-              <li>
-                y 是前圆唇元音：发音时舌位靠前，同时收圆嘴唇。
-                <SourceLink href={FINNISH_SOURCES.vowels}>EURPhon 芬兰语音系资料</SourceLink>
+            {guidance?.tips.map((tip) => (
+              <li key={tip.text}>
+                {tip.text}
+                <SourceLink href={tip.sourceUrl}>{tip.source}</SourceLink>
               </li>
-            )}
-            {word.toLocaleLowerCase().includes("ä") && (
-              <li>
-                ä 是独立的前元音，和 a 是不同字母、不同发音；输入时请保留 ä。
-                <SourceLink href={FINNISH_SOURCES.vowels}>EURPhon 芬兰语音系资料</SourceLink>
-              </li>
-            )}
+            ))}
           </ol>
         </div>
       )}

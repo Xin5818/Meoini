@@ -17,6 +17,17 @@ export interface DictionaryEntry {
   pronunciation?: string;
   pronunciationSource?: string;
   pronunciationAudioUrl?: string;
+  pronunciations?: Pronunciation[];
+  source?: string;
+  sourceUrl?: string;
+}
+
+export interface Pronunciation {
+  ipa?: string[];
+  audioUrl?: string;
+  audioSource?: string;
+  audioSourceUrl?: string;
+  syllabification?: string;
   source?: string;
   sourceUrl?: string;
 }

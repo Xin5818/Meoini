@@ -1,4 +1,4 @@
-import type { DictionaryEntry } from "../../../types/word";
+import type { DictionaryEntry, Pronunciation } from "../../../types/word";
 import type { DictionaryProvider } from "../dictionaryService";
 import { extractLemmaFromGloss, stripHtml, truncate } from "../textUtils";
 import { normalizeWord } from "../fuzzy";
@@ -38,10 +38,13 @@ export class WiktionaryProvider implements DictionaryProvider {
       const entry = await this.fetchEntry(variant, language);
       if (entry && entry.meanings.length > 0) {
         if (language === "fi") {
-          const pronunciation = await this.fetchFinnishIpa(variant).catch(() => undefined);
-          if (pronunciation) {
-            entry.pronunciation = pronunciation;
-            entry.pronunciationSource = "Wiktionary (Finnish IPA entry)";
+          const pronunciations = await this.fetchFinnishPronunciations(variant).catch(() => []);
+          if (pronunciations.length > 0) {
+            entry.pronunciations = pronunciations;
+            const first = pronunciations[0];
+            entry.pronunciation = first.ipa?.[0];
+            entry.pronunciationSource = first.ipa?.length ? first.source : undefined;
+            entry.pronunciationAudioUrl = first.audioUrl;
           }
         }
         return [entry];
@@ -91,42 +94,85 @@ export class WiktionaryProvider implements DictionaryProvider {
     return this.parsePayload(word, language, data);
   }
 
-  private async fetchFinnishIpa(word: string): Promise<string | undefined> {
-    const params = new URLSearchParams({
-      action: "query",
-      titles: word,
-      prop: "revisions",
-      rvprop: "content",
-      rvslots: "main",
+  private async fetchFinnishPronunciations(word: string): Promise<Pronunciation[]> {
+    const sectionParams = new URLSearchParams({
+      action: "parse",
+      prop: "sections",
+      page: word,
       format: "json",
       origin: "*",
     });
-    let response: Response;
+    const sectionsResponse = await this.fetchPronunciationApi(sectionParams);
+    if (!sectionsResponse) return [];
+    const sectionsData = await sectionsResponse.json().catch(() => null) as {
+      parse?: { sections?: { line?: string; index?: string }[] };
+    } | null;
+    const finnishSection = sectionsData?.parse?.sections?.find((section) =>
+      section.line?.toLocaleLowerCase() === "finnish",
+    );
+    if (!finnishSection?.index) return [];
+
+    const textParams = new URLSearchParams({
+      action: "parse",
+      page: word,
+      prop: "text",
+      section: finnishSection.index,
+      format: "json",
+      origin: "*",
+    });
+    const textResponse = await this.fetchPronunciationApi(textParams);
+    if (!textResponse) return [];
+    const textData = await textResponse.json().catch(() => null) as {
+      parse?: { text?: { "*"?: string } };
+    } | null;
+    const html = textData?.parse?.text?.["*"];
+    if (!html) return [];
+
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const pronunciationItems = [...document.querySelectorAll("li")].filter((item) =>
+      item.querySelector('a[href*="International_Phonetic_Alphabet"]'),
+    );
+    const syllabification = [...document.querySelectorAll("li")]
+      .find((item) => /^(?:Syllabification|Hyphenation)/i.test(item.textContent?.trim() ?? ""))
+      ?.querySelector('[lang="fi"]')?.textContent?.trim();
+
+    return pronunciationItems.map((item) => {
+      const ipa = [...item.querySelectorAll("span.IPA")]
+        .map((node) => node.textContent?.trim())
+        .filter((value): value is string => Boolean(value && /^[/\[].+[/\]]$/.test(value)));
+      const audio = item.querySelector("audio");
+      const sources = [...(audio?.querySelectorAll("source[src]") ?? [])];
+      const preferredSource = sources.find((source) =>
+        source.getAttribute("type")?.includes("mpeg") || source.getAttribute("src")?.toLowerCase().includes(".mp3"),
+      ) ?? sources[0];
+      const rawAudioUrl = preferredSource?.getAttribute("src") ?? audio?.getAttribute("src");
+      const audioUrl = rawAudioUrl ? new URL(rawAudioUrl, `https://${this.host}`).href : undefined;
+      const fileLink = item.querySelector('a[href*="/wiki/File:"]')?.getAttribute("href");
+      const sourceUrl = `https://${this.host}/wiki/${encodeURIComponent(word)}#Finnish`;
+
+      return {
+        ipa: ipa.length > 0 ? [...new Set(ipa)] : undefined,
+        audioUrl,
+        audioSource: audioUrl ? "Wikimedia Commons（经 Wiktionary 引用）" : undefined,
+        audioSourceUrl: fileLink ? new URL(fileLink, `https://${this.host}`).href : undefined,
+        syllabification,
+        source: "Wiktionary",
+        sourceUrl,
+      };
+    }).filter((pronunciation) =>
+      Boolean(pronunciation.ipa?.length || pronunciation.audioUrl || pronunciation.syllabification),
+    );
+  }
+
+  private async fetchPronunciationApi(params: URLSearchParams): Promise<Response | undefined> {
     try {
-      response = await fetch(`https://${this.host}/w/api.php?${params}`, {
+      const response = await fetch(`https://${this.host}/w/api.php?${params}`, {
         signal: AbortSignal.timeout(6_000),
       });
+      return response.ok ? response : undefined;
     } catch {
       return undefined;
     }
-    if (!response.ok) return undefined;
-
-    const payload = (await response.json().catch(() => null)) as {
-      query?: {
-        pages?: Record<string, {
-          revisions?: { slots?: { main?: { content?: string; "*"?: string } } }[];
-        }>;
-      };
-    } | null;
-    const wikitext = Object.values(payload?.query?.pages ?? {})[0]?.revisions?.[0]?.slots?.main;
-    const source = wikitext?.content ?? wikitext?.["*"];
-    if (!source) return undefined;
-
-    // Only accept IPA templates explicitly tagged Finnish (fi); other language
-    // sections on the same Wiktionary page are not valid Finnish pronunciations.
-    const matches = [...source.matchAll(/\{\{\s*IPA\s*\|\s*fi\s*\|\s*([^|{}]+)(?:\||\}\})/gi)];
-    const ipa = matches.map((match) => match[1].trim()).find((value) => /[\p{L}ʋæøɲŋɡˈˌː]/u.test(value));
-    return ipa;
   }
 
   private parsePayload(
