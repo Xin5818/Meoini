@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
-  base: "/Meoini/",
+  base: "/meoini/",
   plugins: [
     react(),
     tailwindcss(),
@@ -18,8 +18,8 @@ export default defineConfig({
         theme_color: "#0f766e",
         background_color: "#f8fafc",
         display: "standalone",
-        start_url: "/Meoini/",
-        scope: "/Meoini/",
+        start_url: "/meoini/",
+        scope: "/meoini/",
         icons: [
           {
             src: "favicon.svg",
