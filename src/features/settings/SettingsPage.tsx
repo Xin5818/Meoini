@@ -7,14 +7,14 @@ import {
 import {
   downloadTextFile,
   exportFlashcardsToCsv,
-  importFlashcardsFromCsv,
 } from "../import-export/csv";
+import { TxtWordImporter } from "../../components/TxtWordImporter";
 import { loadSettings, saveSettings, type AppSettings } from "./settingsStore";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [cardCount, setCardCount] = useState(0);
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
 
   useEffect(() => {
     void db.flashcards.count().then(setCardCount);
@@ -30,16 +30,15 @@ export function SettingsPage() {
     downloadTextFile(`meoini-flashcards-${date}.csv`, csv, "text/csv;charset=utf-8");
   }
 
-  async function handleImport(file: File | null) {
-    if (!file) return;
-    setImportStatus(null);
+  async function handleDeleteAllFlashcards() {
+    if (!window.confirm("确定删除本地保存的全部闪卡吗？此操作无法撤销。")) return;
+    setDeleteStatus(null);
     try {
-      const text = await file.text();
-      const count = await importFlashcardsFromCsv(text);
-      setCardCount(await db.flashcards.count());
-      setImportStatus(`已导入 ${count} 张闪卡`);
+      await db.flashcards.clear();
+      setCardCount(0);
+      setDeleteStatus("已删除全部本地闪卡。");
     } catch {
-      setImportStatus("导入失败，请检查 CSV 格式");
+      setDeleteStatus("删除失败，请稍后重试。");
     }
   }
 
@@ -70,6 +69,20 @@ export function SettingsPage() {
         </select>
       </section>
 
+      <section className="rounded-2xl border border-red-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-red-800">数据管理</h2>
+        <p className="mt-1 text-xs text-slate-600">删除本地保存的所有闪卡，此操作无法撤销。</p>
+        <button
+          type="button"
+          onClick={() => void handleDeleteAllFlashcards()}
+          disabled={cardCount === 0}
+          className="mt-3 rounded-xl border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          删除全部闪卡
+        </button>
+        {deleteStatus && <p className="mt-2 text-sm text-slate-600" role="status">{deleteStatus}</p>}
+      </section>
+
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-800">本地存储</h2>
         <p className="mt-2 text-sm text-slate-600">
@@ -89,18 +102,7 @@ export function SettingsPage() {
         >
           导出 CSV
         </button>
-        <label className="block">
-          <span className="mb-1 block text-xs text-slate-500">从 CSV 导入（合并/覆盖同 id）</span>
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => void handleImport(e.target.files?.[0] ?? null)}
-            className="w-full text-sm"
-          />
-        </label>
-        {importStatus && (
-          <p className="text-sm text-brand-800">{importStatus}</p>
-        )}
+        <TxtWordImporter onImported={async () => setCardCount(await db.flashcards.count())} />
       </section>
 
       <section className="rounded-2xl border border-dashed border-slate-200 p-4 text-xs text-slate-500">

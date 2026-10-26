@@ -5,12 +5,14 @@ import {
   saveFlashcard,
 } from "../../db/database";
 import type { Flashcard } from "../../types/word";
+import { lookupAndUpdateFlashcard } from "../import-export/txt";
 
 export function LibraryPage() {
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [query, setQuery] = useState("");
   const [langFilter, setLangFilter] = useState<string>("all");
   const [editing, setEditing] = useState<Flashcard | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setCards(await getFlashcards());
@@ -49,12 +51,23 @@ export function LibraryPage() {
     await load();
   }
 
+  async function retryLookup(card: Flashcard) {
+    setRetrying(card.id);
+    try {
+      await lookupAndUpdateFlashcard(card.id);
+      await load();
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <header>
         <h1 className="text-xl font-bold">我的词库</h1>
         <p className="text-sm text-slate-500">共 {cards.length} 张闪卡</p>
       </header>
+
 
       <input
         type="search"
@@ -88,9 +101,15 @@ export function LibraryPage() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="font-semibold text-slate-900">{card.word}</p>
-                <p className="mt-1 text-sm text-slate-600 line-clamp-2">
-                  {card.meaning}
+                <p className={`mt-1 text-sm line-clamp-2 ${card.meaning ? "text-slate-600" : "italic text-slate-400"}`}>
+                  {card.meaning || (card.lookupStatus === "not_found" ? "暂未找到释义" : card.lookupStatus === "error" ? "查询失败，待重试" : card.lookupStatus === "pending" ? "释义查询中…" : "待补充释义")}
                 </p>
+                {card.partOfSpeech && <p className="mt-1 text-xs text-slate-500">{card.partOfSpeech}</p>}
+                {(card.lookupStatus === "not_found" || card.lookupStatus === "error" || card.lookupStatus === "pending") && (
+                  <button type="button" disabled={retrying === card.id} onClick={() => void retryLookup(card)} className="mt-1 text-xs text-brand-700 underline disabled:opacity-50">
+                    {retrying === card.id ? "正在重试…" : "重试查询释义"}
+                  </button>
+                )}
                 {card.tags.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {card.tags.map((tag) => (

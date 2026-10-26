@@ -34,6 +34,7 @@ export function PronunciationPanel({
     source: ipaSource,
   }];
   const availableAudio = records.find((record) => record.audioUrl)?.audioUrl ?? audioUrl;
+  const availableAudioUrls = records.find((record) => record.audioUrls?.length)?.audioUrls ?? (availableAudio ? [availableAudio] : []);
 
   useEffect(() => () => cancelPlayback.current?.(), [word, availableAudio]);
 
@@ -45,7 +46,7 @@ export function PronunciationPanel({
       return;
     }
     cancelPlayback.current = startPronunciationPlayback(
-      { text: word, language, audioUrl: availableAudio },
+      { text: word, language, audioUrl: availableAudio, audioUrls: availableAudioUrls },
       setPlayback,
     );
   }

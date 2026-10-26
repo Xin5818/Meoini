@@ -12,6 +12,9 @@ const CSV_HEADERS = [
   "dueAt",
   "intervalDays",
   "repetitions",
+  "partOfSpeech",
+  "lookupStatus",
+  "dictionaryEntry",
 ] as const;
 
 function escapeCsvField(value: string): string {
@@ -77,6 +80,9 @@ export async function exportFlashcardsToCsv(): Promise<string> {
       String(card.dueAt),
       String(card.intervalDays),
       String(card.repetitions),
+      card.partOfSpeech ?? "",
+      card.lookupStatus ?? "",
+      card.dictionaryEntry ? JSON.stringify(card.dictionaryEntry) : "",
     ]
       .map(escapeCsvField)
       .join(","),
@@ -95,21 +101,25 @@ export function downloadTextFile(filename: string, content: string, mime: string
 }
 
 export async function importFlashcardsFromCsv(text: string): Promise<number> {
+  const cards = parseFlashcardsFromCsv(text);
+  for (const card of cards) await saveFlashcard(card);
+  return cards.length;
+}
+
+export function parseFlashcardsFromCsv(text: string): Flashcard[] {
   const rows = parseCsv(text);
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return [];
 
   const header = rows[0].map((h) => h.trim());
   const hasHeader = header[0] === "id" || header[0] === "word";
   const dataRows = hasHeader ? rows.slice(1) : rows;
 
-  let imported = 0;
+  const cards: Flashcard[] = [];
   for (const row of dataRows) {
     const card = rowToFlashcard(row, header, hasHeader);
-    if (!card) continue;
-    await saveFlashcard(card);
-    imported++;
+    if (card) cards.push(card);
   }
-  return imported;
+  return cards;
 }
 
 function rowToFlashcard(
@@ -140,13 +150,30 @@ function rowToFlashcard(
   const dueAt = Number(get("dueAt", 6)) || now;
   const intervalDays = Number(get("intervalDays", 7)) || 0;
   const repetitions = Number(get("repetitions", 8)) || 0;
+  const partOfSpeech = get("partOfSpeech", 9) || undefined;
+  const lookupStatusRaw = get("lookupStatus", 10);
+  const lookupStatus = ["pending", "found", "not_found", "error"].includes(lookupStatusRaw)
+    ? lookupStatusRaw as Flashcard["lookupStatus"]
+    : undefined;
+  let dictionaryEntry: Flashcard["dictionaryEntry"];
+  const rawEntry = get("dictionaryEntry", 11);
+  if (rawEntry) {
+    try {
+      dictionaryEntry = JSON.parse(rawEntry) as Flashcard["dictionaryEntry"];
+    } catch {
+      dictionaryEntry = undefined;
+    }
+  }
 
   return {
     id,
     word,
     language,
     meaning,
+    partOfSpeech,
     example,
+    lookupStatus,
+    dictionaryEntry,
     tags,
     createdAt,
     dueAt,

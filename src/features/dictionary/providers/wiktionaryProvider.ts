@@ -142,17 +142,24 @@ export class WiktionaryProvider implements DictionaryProvider {
         .filter((value): value is string => Boolean(value && /^[/\[].+[/\]]$/.test(value)));
       const audio = item.querySelector("audio");
       const sources = [...(audio?.querySelectorAll("source[src]") ?? [])];
-      const preferredSource = sources.find((source) =>
-        source.getAttribute("type")?.includes("mpeg") || source.getAttribute("src")?.toLowerCase().includes(".mp3"),
-      ) ?? sources[0];
-      const rawAudioUrl = preferredSource?.getAttribute("src") ?? audio?.getAttribute("src");
-      const audioUrl = rawAudioUrl ? new URL(rawAudioUrl, `https://${this.host}`).href : undefined;
+      const rawAudioUrls = [
+        ...sources
+          .filter((source) => source.getAttribute("type")?.includes("mpeg") || source.getAttribute("src")?.toLowerCase().includes(".mp3")),
+        ...sources.filter((source) =>
+          !source.getAttribute("type")?.includes("mpeg") && !source.getAttribute("src")?.toLowerCase().includes(".mp3"),
+        ),
+      ].map((source) => source.getAttribute("src"))
+        .concat(audio?.getAttribute("src") ?? [])
+        .filter((value): value is string => Boolean(value));
+      const audioUrls = [...new Set(rawAudioUrls.map((url) => new URL(url, `https://${this.host}`).href))];
+      const audioUrl = audioUrls[0];
       const fileLink = item.querySelector('a[href*="/wiki/File:"]')?.getAttribute("href");
       const sourceUrl = `https://${this.host}/wiki/${encodeURIComponent(word)}#Finnish`;
 
       return {
         ipa: ipa.length > 0 ? [...new Set(ipa)] : undefined,
         audioUrl,
+        audioUrls: audioUrls.length ? audioUrls : undefined,
         audioSource: audioUrl ? "Wikimedia Commons（经 Wiktionary 引用）" : undefined,
         audioSourceUrl: fileLink ? new URL(fileLink, `https://${this.host}`).href : undefined,
         syllabification,
@@ -160,7 +167,7 @@ export class WiktionaryProvider implements DictionaryProvider {
         sourceUrl,
       };
     }).filter((pronunciation) =>
-      Boolean(pronunciation.ipa?.length || pronunciation.audioUrl || pronunciation.syllabification),
+      Boolean(pronunciation.ipa?.length || pronunciation.audioUrls?.length || pronunciation.audioUrl || pronunciation.syllabification),
     );
   }
 

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getDueFlashcards, saveFlashcard } from "../../db/database";
 import type { Flashcard, ReviewRating } from "../../types/word";
 import { applyReview } from "./review";
+import { PronunciationPanel } from "../../components/PronunciationPanel";
 
 export function ReviewPage() {
   const [queue, setQueue] = useState<Flashcard[]>([]);
@@ -81,11 +82,24 @@ export function ReviewPage() {
           </p>
         ) : (
           <div className="mt-6 space-y-3 border-t border-slate-100 pt-4">
-            <p className="text-lg text-slate-800">{current.meaning}</p>
+            {current.partOfSpeech && <p className="text-xs text-slate-500">{current.partOfSpeech}</p>}
+            <p className={`text-lg ${current.meaning ? "text-slate-800" : "text-slate-500"}`}>
+              {current.meaning || (current.lookupStatus === "not_found" ? "暂未找到释义" : current.lookupStatus === "error" ? "查询暂时失败，可稍后在词库重试" : current.lookupStatus === "pending" ? "释义查询中…" : "待补充释义")}
+            </p>
             {current.example && (
               <p className="text-sm italic text-slate-600">
                 &ldquo;{current.example}&rdquo;
               </p>
+            )}
+            {current.dictionaryEntry && (
+              <PronunciationPanel
+                word={current.word}
+                language={current.language}
+                ipa={current.dictionaryEntry.pronunciation}
+                ipaSource={current.dictionaryEntry.pronunciationSource}
+                audioUrl={current.dictionaryEntry.pronunciationAudioUrl}
+                pronunciations={current.dictionaryEntry.pronunciations}
+              />
             )}
           </div>
         )}

@@ -8,6 +8,7 @@ export interface PronunciationRequest {
   text: string;
   language: string;
   audioUrl?: string;
+  audioUrls?: string[];
 }
 
 type OnStateChange = (state: PronunciationState) => void;
@@ -29,6 +30,8 @@ export function playPronunciation(
   let voiceListener: (() => void) | undefined;
   let resolveVoiceWait: (() => void) | undefined;
   let usedSpeech = false;
+  const audioUrls = [...new Set([...(request.audioUrls ?? []), request.audioUrl].filter((url): url is string => Boolean(url)))];
+  let audioIndex = 0;
 
   const emit = (state: PronunciationState) => {
     if (!cancelled) onState(state);
@@ -162,23 +165,35 @@ export function playPronunciation(
     }
   };
 
-  if (request.audioUrl) {
+  const playNextAudio = () => {
+    if (cancelled) return;
+    if (playbackTimer !== undefined) window.clearTimeout(playbackTimer);
+    if (audio) {
+      audio.onplay = null;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+    }
+    const nextUrl = audioUrls[audioIndex++];
+    if (!nextUrl) {
+      void speak(audioUrls.length > 0);
+      return;
+    }
     emit({ status: "loading", message: "正在加载词典原音…" });
     try {
-      audio = new Audio(request.audioUrl);
+      audio = new Audio(nextUrl);
     } catch {
-      void speak(true);
-      return cancel;
+      playNextAudio();
+      return;
     }
     audio.preload = "none";
     audio.onplay = () => emit({ status: "playing", source: "dictionary", message: "正在播放词典原音。" });
     audio.onended = () => finish({ status: "finished", message: "词典原音播放完成。" });
-    audio.onerror = () => void speak(true);
-    playbackTimer = window.setTimeout(() => void speak(true), 12_000);
-    void audio.play().catch(() => void speak(true));
-  } else {
-    void speak(false);
-  }
+    audio.onerror = playNextAudio;
+    playbackTimer = window.setTimeout(playNextAudio, 12_000);
+    void audio.play().catch(playNextAudio);
+  };
+  playNextAudio();
 
   return cancel;
 }

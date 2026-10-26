@@ -25,6 +25,7 @@ export interface DictionaryEntry {
 export interface Pronunciation {
   ipa?: string[];
   audioUrl?: string;
+  audioUrls?: string[];
   audioSource?: string;
   audioSourceUrl?: string;
   syllabification?: string;
@@ -37,7 +38,10 @@ export interface Flashcard {
   word: string;
   language: string;
   meaning: string;
+  partOfSpeech?: string;
   example?: string;
+  dictionaryEntry?: DictionaryEntry;
+  lookupStatus?: "pending" | "found" | "not_found" | "error";
   tags: string[];
   createdAt: number;
   dueAt: number;
