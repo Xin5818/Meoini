@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { db } from "../../db/database";
-import { getSupportedDictionaryLanguages } from "../dictionary/dictionaryService";
+import {
+  getLanguageLabel,
+  getSupportedDictionaryLanguages,
+} from "../dictionary/dictionaryService";
 import {
   downloadTextFile,
   exportFlashcardsToCsv,
@@ -52,14 +55,18 @@ export function SettingsPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-800">学习语言</h2>
         <p className="mt-1 text-xs text-slate-500">
-          第一版在线查词目前支持：{supported.join(", ")}
+          在线查词支持：{supported.map((c) => `${getLanguageLabel(c)} (${c})`).join("、")}
         </p>
         <select
           value={settings.learningLanguage}
           onChange={(e) => updateLanguage(e.target.value)}
           className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
         >
-          <option value="en">English (en)</option>
+          {supported.map((code) => (
+            <option key={code} value={code}>
+              {getLanguageLabel(code)} ({code})
+            </option>
+          ))}
         </select>
       </section>
 
@@ -104,9 +111,9 @@ export function SettingsPage() {
         </ul>
       </section>
 
-      <section className="text-xs text-slate-400">
+      <section className="text-xs text-slate-400 space-y-2">
         <p>
-          英语释义数据来自{" "}
+          英语：{" "}
           <a
             href="https://dictionaryapi.dev/"
             className="underline"
@@ -115,7 +122,18 @@ export function SettingsPage() {
           >
             Free Dictionary API
           </a>
-          ，仅供学习用途，请遵守其服务条款。
+        </p>
+        <p>
+          芬兰语及联想：{" "}
+          <a
+            href="https://www.wiktionary.org/"
+            className="underline"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Wiktionary
+          </a>
+          （CC BY-SA）
         </p>
       </section>
     </div>

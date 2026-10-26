@@ -4,13 +4,19 @@ export interface DictionaryEntry {
   meanings: {
     text: string;
     language: string;
+    definitionLanguage?: string;
     partOfSpeech?: string;
+    register?: string;
+    usageFrequency?: string;
   }[];
   examples?: {
     text: string;
     translation?: string;
+    translationLanguage?: string;
   }[];
   pronunciation?: string;
+  pronunciationSource?: string;
+  pronunciationAudioUrl?: string;
   source?: string;
   sourceUrl?: string;
 }

@@ -11,6 +11,7 @@ interface ApiMeaning {
 
 interface ApiPhonetic {
   text?: string;
+  audio?: string;
 }
 
 interface ApiEntry {
@@ -32,17 +33,31 @@ export class FreeDictionaryApiProvider implements DictionaryProvider {
     }
 
     const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(query)}`;
-    const response = await fetch(url);
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    } catch (error) {
+      throw new Error(error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "NETWORK");
+    }
 
     if (response.status === 404) {
       return [];
     }
 
-    if (!response.ok) {
-      throw new Error(`词典请求失败 (${response.status})`);
+    if (response.status === 429) {
+      throw new Error("RATE_LIMIT");
     }
 
-    const data = (await response.json()) as ApiEntry[];
+    if (!response.ok) {
+      throw new Error(`PROVIDER_${response.status}`);
+    }
+
+    let data: ApiEntry[];
+    try {
+      data = (await response.json()) as ApiEntry[];
+    } catch {
+      throw new Error("PROVIDER_INVALID_RESPONSE");
+    }
     return data.map((entry) => this.toDictionaryEntry(entry, language));
   }
 
@@ -56,6 +71,7 @@ export class FreeDictionaryApiProvider implements DictionaryProvider {
         meanings.push({
           text: def.definition,
           language: "en",
+          definitionLanguage: "en",
           partOfSpeech: block.partOfSpeech,
         });
         if (def.example) {
@@ -66,6 +82,7 @@ export class FreeDictionaryApiProvider implements DictionaryProvider {
 
     const pronunciation =
       entry.phonetics?.find((p) => p.text)?.text ?? undefined;
+    const audio = entry.phonetics?.find((p) => p.audio?.startsWith("https://"))?.audio;
 
     return {
       word: entry.word,
@@ -73,6 +90,7 @@ export class FreeDictionaryApiProvider implements DictionaryProvider {
       meanings,
       examples: examples.length ? examples : undefined,
       pronunciation,
+      pronunciationAudioUrl: audio,
       source: "Free Dictionary API",
       sourceUrl: entry.sourceUrls?.[0] ?? "https://dictionaryapi.dev/",
     };

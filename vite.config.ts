@@ -38,6 +38,14 @@ export default defineConfig({
               networkTimeoutSeconds: 10,
             },
           },
+          {
+            urlPattern: /^https:\/\/([a-z]+\.)?wiktionary\.org\/.*/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "wiktionary-api",
+              networkTimeoutSeconds: 10,
+            },
+          },
         ],
       },
     }),
