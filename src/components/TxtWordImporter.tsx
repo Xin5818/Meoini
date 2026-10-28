@@ -4,6 +4,18 @@ import { getExistingWordKeys, importWordsAsFlashcards, lookupAndUpdateFlashcard,
 import { loadSettings } from "../features/settings/settingsStore";
 import { importFlashcardsFromCsv, parseFlashcardsFromCsv } from "../features/import-export/csv";
 import type { Flashcard } from "../types/word";
+import { DictionaryLookupProgress } from "./DictionaryLookupProgress";
+
+const LOOKUP_CONCURRENCY = 2;
+
+interface BatchProgress {
+  total: number;
+  pending: number;
+  querying: number;
+  found: number;
+  notFound: number;
+  failed: number;
+}
 
 export function TxtWordImporter({ onImported }: { onImported: () => Promise<void> }) {
   const [language, setLanguage] = useState(() => loadSettings().learningLanguage);
@@ -16,6 +28,7 @@ export function TxtWordImporter({ onImported }: { onImported: () => Promise<void
   const [busy, setBusy] = useState(false);
   const [csvPreview, setCsvPreview] = useState<Flashcard[] | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
 
   async function handleFile(file?: File) {
     setError("");
@@ -73,19 +86,52 @@ export function TxtWordImporter({ onImported }: { onImported: () => Promise<void
       const result = await importWordsAsFlashcards(words, language);
       setWords([]);
       setSelectedFile(null);
-      setStatus(`已创建 ${result.imported} 张闪卡，跳过已有的 ${result.existing} 个单词；开始逐个查询词典…`);
+      setStatus("");
       await onImported();
+      const initial: BatchProgress = {
+        total: result.cards.length,
+        pending: result.cards.length,
+        querying: 0,
+        found: 0,
+        notFound: 0,
+        failed: 0,
+      };
+      setBatchProgress(initial);
+      let cursor = 0;
       let found = 0;
       let notFound = 0;
       let failed = 0;
-      for (let index = 0; index < result.cards.length; index++) {
-        const outcome = await lookupAndUpdateFlashcard(result.cards[index].id);
-        if (outcome === "found") found++;
-        else if (outcome === "not_found") notFound++;
-        else failed++;
-        setStatus(`正在查询释义：${index + 1}/${result.cards.length}（已找到 ${found}，未收录 ${notFound}，查询失败 ${failed}）`);
-      }
-      setStatus(`导入完成：新增 ${result.imported} 张，跳过已有 ${result.existing} 个；释义找到 ${found} 个、暂未找到 ${notFound} 个、查询失败 ${failed} 个。后两类卡片已保留，可稍后重试。`);
+      const worker = async () => {
+        while (cursor < result.cards.length) {
+          const card = result.cards[cursor++];
+          setBatchProgress((current) => current ? {
+            ...current,
+            pending: Math.max(0, current.pending - 1),
+            querying: current.querying + 1,
+          } : current);
+          let outcome: "found" | "not_found" | "error" = "error";
+          try {
+            outcome = await lookupAndUpdateFlashcard(card.id);
+          } catch {
+            outcome = "error";
+          } finally {
+            if (outcome === "found") found++;
+            else if (outcome === "not_found") notFound++;
+            else failed++;
+            setBatchProgress((current) => current ? {
+              ...current,
+              querying: Math.max(0, current.querying - 1),
+              found,
+              notFound,
+              failed,
+            } : current);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(LOOKUP_CONCURRENCY, result.cards.length) }, worker));
+      const remaining = result.cards.length - found - notFound - failed;
+      setBatchProgress({ total: result.cards.length, pending: remaining, querying: 0, found, notFound, failed });
+      setStatus(`本次导入报告：新增 ${result.imported} 张，跳过已有 ${result.existing} 个；成功 ${found}，查无释义 ${notFound}，失败 ${failed}，仍待查询 ${remaining}。`);
       await onImported();
     } catch {
       setError("保存闪卡失败，请重试。");
@@ -105,6 +151,7 @@ export function TxtWordImporter({ onImported }: { onImported: () => Promise<void
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-slate-800">导入 CSV / TXT</h2>
       <p className="mt-1 text-xs text-slate-500">CSV 还原完整闪卡；TXT 支持每行一个单词、Markdown 单列表格、逗号或分号分隔。TXT 导入后会逐个查询词典并保存释义。</p>
+      <div className="mt-4"><DictionaryLookupProgress /></div>
       <label className="mt-3 block text-sm">
         <span className="text-slate-600">目标语言</span>
         <select value={language} onChange={(event) => void changeLanguage(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -118,6 +165,9 @@ export function TxtWordImporter({ onImported }: { onImported: () => Promise<void
 
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
       {status && <p role="status" className="mt-3 text-sm text-brand-800">{status}</p>}
+      {batchProgress && batchProgress.total > 0 && (
+        <BatchProgressView progress={batchProgress} />
+      )}
       {words.length > 0 && (
         <div className="mt-4">
           <p className="text-sm font-medium">识别到 {words.length} 个不同单词</p>
@@ -150,5 +200,17 @@ export function TxtWordImporter({ onImported }: { onImported: () => Promise<void
         </div>
       )}
     </section>
+  );
+}
+
+function BatchProgressView({ progress }: { progress: BatchProgress }) {
+  const completed = progress.found + progress.notFound + progress.failed;
+  const percent = Math.round((completed / progress.total) * 100);
+  return (
+    <div className="mt-4 rounded-xl bg-brand-50 p-3" aria-label="本次导入查询进度">
+      <div className="flex justify-between text-xs font-medium text-brand-900"><span>本次导入查询</span><span>{percent}%</span></div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white"><div className="h-full bg-brand-600 transition-all" style={{ width: `${percent}%` }} /></div>
+      <p className="mt-2 text-xs text-brand-900">总数 {progress.total} · 待查询 {progress.pending} · 查询中 {progress.querying} · 成功 {progress.found} · 查无释义 {progress.notFound} · 失败 {progress.failed}</p>
+    </div>
   );
 }

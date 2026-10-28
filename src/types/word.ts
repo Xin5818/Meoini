@@ -6,6 +6,8 @@ export interface DictionaryEntry {
     language: string;
     definitionLanguage?: string;
     partOfSpeech?: string;
+    grammaticalForm?: string;
+    formOf?: string;
     register?: string;
     usageFrequency?: string;
   }[];
@@ -13,12 +15,36 @@ export interface DictionaryEntry {
     text: string;
     translation?: string;
     translationLanguage?: string;
+    kind?: "sentence" | "collocation";
+    formOf?: string;
+    formSourceUrl?: string;
+    grammaticalForm?: string;
+    register?: string;
+    usageFrequency?: string;
   }[];
   pronunciation?: string;
   pronunciationSource?: string;
   pronunciationAudioUrl?: string;
   pronunciations?: Pronunciation[];
   source?: string;
+  sourceUrl?: string;
+  forms?: WordForm[];
+  lookupDiagnostics?: {
+    fallbackUsed: boolean;
+    matchType: "exact" | "case_variant" | "language_alias";
+    matchedLanguageKey?: string;
+    matchedLanguageLabel?: string;
+    attempts: { query: string; languageKey?: string; languageLabel?: string; status: "found" | "empty" | "failed"; reason?: string }[];
+  };
+}
+
+export interface WordForm {
+  word: string;
+  lemma: string;
+  partOfSpeech?: string;
+  grammaticalForm: string;
+  grammaticalNumber?: "singular" | "plural";
+  gloss?: string;
   sourceUrl?: string;
 }
 
@@ -41,7 +67,13 @@ export interface Flashcard {
   partOfSpeech?: string;
   example?: string;
   dictionaryEntry?: DictionaryEntry;
-  lookupStatus?: "pending" | "found" | "not_found" | "error";
+  lookupStatus?: "pending" | "querying" | "found" | "not_found" | "error";
+  lookupStartedAt?: number;
+  lookupCompletedAt?: number;
+  lookupError?: string;
+  lastReviewedAt?: number;
+  lastReviewMode?: "scheduled" | "early";
+  earlyReviewCount?: number;
   tags: string[];
   createdAt: number;
   dueAt: number;

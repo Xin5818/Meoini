@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ManualFlashcardForm } from "../../components/ManualFlashcardForm";
 import { SearchBar } from "../../components/SearchBar";
 import { WordCard } from "../../components/WordCard";
-import { countDueFlashcards, saveFlashcard } from "../../db/database";
+import { countDueFlashcards, getFlashcardByWord, saveFlashcard, saveFlashcardIfAbsent } from "../../db/database";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import type { DictionaryEntry } from "../../types/word";
 import {
@@ -18,6 +18,7 @@ import {
   pushRecentSearch,
 } from "../settings/settingsStore";
 import { createFlashcard } from "./review";
+import { createDictionaryFlashcard } from "../dictionary/meaningProcessing";
 
 export function HomePage() {
   const [dueCount, setDueCount] = useState(0);
@@ -29,16 +30,26 @@ export function HomePage() {
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<DictionarySuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const [savingIndex, setSavingIndex] = useState<number | null>(null);
+  const [savingWord, setSavingWord] = useState<string | null>(null);
+  const [savedWords, setSavedWords] = useState<Set<string>>(() => new Set());
+  const [saveError, setSaveError] = useState("");
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualSaved, setManualSaved] = useState(false);
+  const [metaError, setMetaError] = useState("");
+  const searchRequest = useRef(0);
+  const searchController = useRef<AbortController | null>(null);
 
   const debouncedQuery = useDebouncedValue(query, 250);
   const language = loadSettings().learningLanguage;
 
   const refreshMeta = useCallback(async () => {
-    setDueCount(await countDueFlashcards());
-    setRecent(loadRecentSearches());
+    try {
+      setDueCount(await countDueFlashcards());
+      setRecent(loadRecentSearches());
+      setMetaError("");
+    } catch {
+      setMetaError("读取本地复习数据失败；查词仍可继续使用。");
+    }
   }, []);
 
   useEffect(() => {
@@ -54,11 +65,12 @@ export function HomePage() {
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     setSuggestionsLoading(true);
 
     void (async () => {
       try {
-        const words = await suggestDictionaryWords(prefix, language, 8);
+        const words = await suggestDictionaryWords(prefix, language, 8, controller.signal);
         if (cancelled) return;
         const base = words.map((word) => ({ word }));
         if (!cancelled) setSuggestions(base);
@@ -71,11 +83,21 @@ export function HomePage() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [debouncedQuery, language]);
 
+  useEffect(() => () => {
+    searchRequest.current++;
+    searchController.current?.abort();
+  }, []);
+
   async function handleSearch(searchQuery: string) {
     if (!searchQuery) return;
+    searchController.current?.abort();
+    const controller = new AbortController();
+    searchController.current = controller;
+    const requestId = ++searchRequest.current;
     setQuery(searchQuery);
     setLoading(true);
     setOutcome(null);
@@ -85,13 +107,25 @@ export function HomePage() {
     setManualSaved(false);
 
     try {
-      const result = await searchDictionarySmart(searchQuery, language);
+      const result = await searchDictionarySmart(searchQuery, language, controller.signal);
+      if (requestId !== searchRequest.current) return;
       setOutcome(result);
 
       if (result.status === "ok") {
         pushRecentSearch(searchQuery);
         setRecent(loadRecentSearches());
         setResults(result.entries);
+        try {
+          const savedEntries = await Promise.all(
+            result.entries.map((entry) => getFlashcardByWord(entry.word, entry.language)),
+          );
+          if (requestId !== searchRequest.current) return;
+          setSavedWords(new Set(savedEntries.flatMap((card, index) =>
+            card ? [dictionaryEntryKey(result.entries[index].language, result.entries[index].word)] : [],
+          )));
+        } catch {
+          setSearchMeta("词典结果已加载，但暂时无法读取本地已保存状态。可重试查词。 ");
+        }
         if (result.matchKind === "diacritic") {
           setSearchMeta(`未找到完全相同的拼写「${searchQuery}」，已通过变音符容错匹配到「${result.queryUsed}」`);
         } else if (result.matchKind === "fuzzy" && result.queryUsed !== searchQuery) {
@@ -104,26 +138,35 @@ export function HomePage() {
       } else if (result.status === "not_found") {
         setSuggestions(result.suggestions);
       }
+    } catch (error) {
+      if (requestId !== searchRequest.current) return;
+      setOutcome({
+        status: "error",
+        query: searchQuery,
+        errorKind: "provider",
+        message: error instanceof Error && error.message === "TIMEOUT"
+          ? "查词请求超时，请重试。"
+          : "查词过程中读取数据失败，请重试。",
+      });
     } finally {
-      setLoading(false);
+      if (requestId === searchRequest.current) setLoading(false);
     }
   }
 
-  async function handleSave(entry: DictionaryEntry, meaningIndex: number) {
-    const meaning = entry.meanings[meaningIndex];
-    if (!meaning) return;
-    setSavingIndex(meaningIndex);
-    const example = entry.examples?.[0]?.text;
-    const card = createFlashcard({
-      word: entry.word,
-      language: entry.language,
-      meaning: meaning.text,
-      example,
-      tags: meaning.partOfSpeech ? [meaning.partOfSpeech] : [],
-    });
-    await saveFlashcard(card);
-    setDueCount(await countDueFlashcards());
-    setTimeout(() => setSavingIndex(null), 600);
+  async function handleSave(entry: DictionaryEntry) {
+    const key = dictionaryEntryKey(entry.language, entry.word);
+    if (savedWords.has(key) || savingWord === key) return;
+    setSavingWord(key);
+    setSaveError("");
+    try {
+      await saveFlashcardIfAbsent(createDictionaryFlashcard(entry));
+      setSavedWords((current) => new Set(current).add(key));
+      setDueCount(await countDueFlashcards());
+    } catch {
+      setSaveError(`保存「${entry.word}」失败，请稍后重试。`);
+    } finally {
+      setSavingWord(null);
+    }
   }
 
   async function handleManualSave(data: {
@@ -169,6 +212,7 @@ export function HomePage() {
           </Link>
         )}
       </header>
+      {metaError && <p role="status" className="text-xs text-amber-800">{metaError}</p>}
 
       <SearchBar
         query={query}
@@ -192,6 +236,9 @@ export function HomePage() {
           <p className="mt-2 text-xs text-red-800">
             这与「词库中没有该词」不同。请检查网络，或稍后再试；也可手动创建闪卡。
           </p>
+          <button type="button" disabled={loading} onClick={() => void handleSearch(outcome.query)} className="mt-3 mr-2 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-900 ring-1 ring-red-200 disabled:opacity-50">
+            重试查词
+          </button>
           <button
             type="button"
             onClick={() => setShowManualForm(true)}
@@ -278,15 +325,21 @@ export function HomePage() {
       )}
 
       <div className="space-y-4">
+        {saveError && <p role="alert" className="text-sm text-red-700">{saveError}</p>}
         {results.map((entry, i) => (
           <WordCard
             key={`${entry.word}-${i}`}
             entry={entry}
-            onSaveMeaning={(idx) => handleSave(entry, idx)}
-            savingIndex={savingIndex}
+            onSaveEntry={() => void handleSave(entry)}
+            saving={savingWord === dictionaryEntryKey(entry.language, entry.word)}
+            saved={savedWords.has(dictionaryEntryKey(entry.language, entry.word))}
           />
         ))}
       </div>
     </div>
   );
+}
+
+function dictionaryEntryKey(language: string, word: string): string {
+  return `${language}:${word.normalize("NFC").toLocaleLowerCase()}`;
 }

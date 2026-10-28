@@ -146,7 +146,7 @@ export function playPronunciation(
       source: "speech",
       message: `正在播放浏览器语音合成（${utterance?.lang}），不是词典原音。`,
     });
-    utterance.onend = () => finish({ status: "finished", message: "语音播放完成。" });
+    utterance.onend = () => finish({ status: "finished", message: "" });
     utterance.onerror = (event) => {
       const noVoice = event.error === "voice-unavailable" || event.error === "language-unavailable";
       finish({
@@ -188,7 +188,7 @@ export function playPronunciation(
     }
     audio.preload = "none";
     audio.onplay = () => emit({ status: "playing", source: "dictionary", message: "正在播放词典原音。" });
-    audio.onended = () => finish({ status: "finished", message: "词典原音播放完成。" });
+    audio.onended = () => finish({ status: "finished", message: "" });
     audio.onerror = playNextAudio;
     playbackTimer = window.setTimeout(playNextAudio, 12_000);
     void audio.play().catch(playNextAudio);

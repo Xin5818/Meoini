@@ -15,6 +15,12 @@ const CSV_HEADERS = [
   "partOfSpeech",
   "lookupStatus",
   "dictionaryEntry",
+  "lookupStartedAt",
+  "lookupCompletedAt",
+  "lookupError",
+  "lastReviewedAt",
+  "lastReviewMode",
+  "earlyReviewCount",
 ] as const;
 
 function escapeCsvField(value: string): string {
@@ -83,6 +89,12 @@ export async function exportFlashcardsToCsv(): Promise<string> {
       card.partOfSpeech ?? "",
       card.lookupStatus ?? "",
       card.dictionaryEntry ? JSON.stringify(card.dictionaryEntry) : "",
+      String(card.lookupStartedAt ?? ""),
+      String(card.lookupCompletedAt ?? ""),
+      card.lookupError ?? "",
+      String(card.lastReviewedAt ?? ""),
+      card.lastReviewMode ?? "",
+      String(card.earlyReviewCount ?? ""),
     ]
       .map(escapeCsvField)
       .join(","),
@@ -152,9 +164,11 @@ function rowToFlashcard(
   const repetitions = Number(get("repetitions", 8)) || 0;
   const partOfSpeech = get("partOfSpeech", 9) || undefined;
   const lookupStatusRaw = get("lookupStatus", 10);
-  const lookupStatus = ["pending", "found", "not_found", "error"].includes(lookupStatusRaw)
-    ? lookupStatusRaw as Flashcard["lookupStatus"]
-    : undefined;
+  const lookupStatus = lookupStatusRaw === "querying"
+    ? "pending"
+    : ["pending", "found", "not_found", "error"].includes(lookupStatusRaw)
+      ? lookupStatusRaw as Flashcard["lookupStatus"]
+      : undefined;
   let dictionaryEntry: Flashcard["dictionaryEntry"];
   const rawEntry = get("dictionaryEntry", 11);
   if (rawEntry) {
@@ -165,6 +179,11 @@ function rowToFlashcard(
     }
   }
 
+  const lastReviewModeRaw = get("lastReviewMode", 17);
+  const lastReviewMode = lastReviewModeRaw === "scheduled" || lastReviewModeRaw === "early"
+    ? lastReviewModeRaw
+    : undefined;
+
   return {
     id,
     word,
@@ -174,6 +193,12 @@ function rowToFlashcard(
     example,
     lookupStatus,
     dictionaryEntry,
+    lookupStartedAt: undefined,
+    lookupCompletedAt: Number(get("lookupCompletedAt", 13)) || undefined,
+    lookupError: get("lookupError", 14) || undefined,
+    lastReviewedAt: Number(get("lastReviewedAt", 16)) || undefined,
+    lastReviewMode,
+    earlyReviewCount: Number(get("earlyReviewCount", 18)) || undefined,
     tags,
     createdAt,
     dueAt,

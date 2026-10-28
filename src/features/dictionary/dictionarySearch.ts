@@ -6,6 +6,7 @@ import {
 } from "./dictionaryService";
 import type { DictionaryProviderError } from "./dictionaryService";
 import { collectLemmaHints } from "./providers/wiktionaryProvider";
+import { createRequestSignal, mapRequestError } from "./request.ts";
 
 export interface DictionarySuggestion {
   word: string;
@@ -35,16 +36,18 @@ export type DictionarySearchResult =
 export async function searchDictionarySmart(
   query: string,
   language: string,
+  parentSignal?: AbortSignal,
 ): Promise<DictionarySearchResult> {
+  const signal = createRequestSignal(parentSignal, 30_000);
   const trimmed = normalizeWord(query);
   if (!trimmed) {
     return { status: "not_found", query: "", suggestions: [] };
   }
 
   try {
-    const exact = await searchDictionaryExact(trimmed, language);
+    const exact = await searchDictionaryExact(trimmed, language, signal);
     if (exact.length > 0) {
-      const { entries, relatedWords } = await attachLemmaEntries(exact, language);
+      const { entries, relatedWords } = await attachLemmaEntries(exact, language, signal);
       return {
         status: "ok",
         entries,
@@ -56,9 +59,9 @@ export async function searchDictionarySmart(
 
     // Keep exact spelling first. Only try diacritic substitutions after the exact lookup misses.
     for (const variant of diacriticVariants(trimmed)) {
-      const entries = await searchDictionaryExact(variant, language);
+      const entries = await searchDictionaryExact(variant, language, signal);
       if (entries.length === 0) continue;
-      const related = await attachLemmaEntries(entries, language);
+      const related = await attachLemmaEntries(entries, language, signal);
       return {
         status: "ok",
         entries: related.entries,
@@ -70,17 +73,17 @@ export async function searchDictionarySmart(
 
     const candidateLists = await Promise.all(
       [trimmed, ...diacriticVariants(trimmed)].map((q) =>
-        suggestDictionaryWords(q, language, 12),
+        suggestDictionaryWords(q, language, 12, signal),
       ),
     );
     const prefixList = [...new Set(candidateLists.flat())];
     const exactFromList = prefixList.find((w) => normalizeWord(w).toLocaleLowerCase() === trimmed.toLocaleLowerCase());
     if (exactFromList) {
-      const entries = await searchDictionaryExact(exactFromList, language);
+      const entries = await searchDictionaryExact(exactFromList, language, signal);
       if (entries.length > 0) {
         return {
           status: "ok",
-          entries: (await attachLemmaEntries(entries, language)).entries,
+          entries: (await attachLemmaEntries(entries, language, signal)).entries,
           matchKind: "exact",
           queryUsed: exactFromList,
         };
@@ -89,11 +92,11 @@ export async function searchDictionarySmart(
 
     const fuzzyWord = pickFuzzyCandidate(trimmed, prefixList);
     if (fuzzyWord) {
-      const entries = await searchDictionaryExact(fuzzyWord, language);
+      const entries = await searchDictionaryExact(fuzzyWord, language, signal);
       if (entries.length > 0) {
         return {
           status: "ok",
-          entries: (await attachLemmaEntries(entries, language)).entries,
+          entries: (await attachLemmaEntries(entries, language, signal)).entries,
           matchKind: "fuzzy",
           queryUsed: fuzzyWord,
         };
@@ -103,11 +106,12 @@ export async function searchDictionarySmart(
     const suggestions = prefixList.slice(0, 8).map((word) => ({ word }));
     return { status: "not_found", query: trimmed, suggestions };
   } catch (err) {
+    const normalizedError = signal.aborted ? mapRequestError(err, signal) : err;
     return {
       status: "error",
       query: trimmed,
-      message: mapErrorMessage(err),
-      errorKind: classifyError(err),
+      message: mapErrorMessage(normalizedError),
+      errorKind: classifyError(normalizedError),
     };
   }
 }
@@ -135,6 +139,7 @@ export async function enrichSuggestionsWithHints(
 async function attachLemmaEntries(
   entries: DictionaryEntry[],
   language: string,
+  signal?: AbortSignal,
 ): Promise<{ entries: DictionaryEntry[]; relatedWords: string[] }> {
   const lemmas = new Set<string>();
   for (const entry of entries) {
@@ -146,7 +151,7 @@ async function attachLemmaEntries(
   const extra: DictionaryEntry[] = [];
   for (const lemma of lemmas) {
     try {
-      const found = await searchDictionaryExact(lemma, language);
+      const found = await searchDictionaryExact(lemma, language, signal);
       if (found.length > 0) {
         extra.push({
           ...found[0],
@@ -157,6 +162,7 @@ async function attachLemmaEntries(
         });
       }
     } catch {
+      if (signal?.aborted) throw new Error("ABORTED");
       /* ignore lemma lookup failures */
     }
   }

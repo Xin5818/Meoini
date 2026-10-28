@@ -6,7 +6,7 @@ import {
 } from "./providers/wiktionaryProvider";
 
 export interface DictionaryProvider {
-  search(word: string, language: string): Promise<DictionaryEntry[]>;
+  search(word: string, language: string, signal?: AbortSignal): Promise<DictionaryEntry[]>;
 }
 
 export type DictionaryProviderError =
@@ -53,6 +53,7 @@ function assertLanguage(language: string) {
 export async function searchDictionaryExact(
   word: string,
   language: string,
+  signal?: AbortSignal,
 ): Promise<DictionaryEntry[]> {
   assertLanguage(language);
   const { chain } = LANGUAGE_META[language];
@@ -60,11 +61,11 @@ export async function searchDictionaryExact(
 
   for (const provider of chain) {
     try {
-      const entries = await provider.search(word, language);
+      const entries = await provider.search(word, language, signal);
       if (entries.length > 0) return entries;
     } catch (err) {
       lastError = err;
-      if (err instanceof Error && ["NETWORK", "TIMEOUT", "RATE_LIMIT"].includes(err.message)) throw err;
+      if (err instanceof Error && ["NETWORK", "TIMEOUT", "RATE_LIMIT", "ABORTED"].includes(err.message)) throw err;
     }
   }
 
@@ -86,10 +87,11 @@ export async function suggestDictionaryWords(
   prefix: string,
   language: string,
   limit = 10,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   assertLanguage(language);
   const host = LANGUAGE_META[language].suggestHost;
-  return wiktionaryOpenSearch(prefix, host, limit);
+  return wiktionaryOpenSearch(prefix, host, limit, signal);
 }
 
 export async function getBriefGloss(

@@ -1,5 +1,6 @@
 import type { DictionaryEntry } from "../../../types/word";
 import type { DictionaryProvider } from "../dictionaryService";
+import { createRequestSignal, mapRequestError } from "../request.ts";
 
 interface ApiMeaning {
   partOfSpeech?: string;
@@ -22,7 +23,7 @@ interface ApiEntry {
 }
 
 export class FreeDictionaryApiProvider implements DictionaryProvider {
-  async search(word: string, language: string): Promise<DictionaryEntry[]> {
+  async search(word: string, language: string, parentSignal?: AbortSignal): Promise<DictionaryEntry[]> {
     if (language !== "en") {
       throw new Error("Free Dictionary API 当前仅支持英语 (en)");
     }
@@ -34,10 +35,11 @@ export class FreeDictionaryApiProvider implements DictionaryProvider {
 
     const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(query)}`;
     let response: Response;
+    const requestSignal = createRequestSignal(parentSignal, 10_000);
     try {
-      response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      response = await fetch(url, { signal: requestSignal });
     } catch (error) {
-      throw new Error(error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "NETWORK");
+      throw mapRequestError(error, requestSignal);
     }
 
     if (response.status === 404) {

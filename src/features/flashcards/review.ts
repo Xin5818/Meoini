@@ -9,36 +9,41 @@ export function applyReview(
   rating: ReviewRating,
   now = Date.now(),
 ): Flashcard {
+  let updated: Flashcard;
   switch (rating) {
     case "again":
-      return {
+      updated = {
         ...card,
         dueAt: now + 4 * HOUR,
         intervalDays: 0,
         repetitions: 0,
       };
+      break;
     case "hard": {
       const intervalDays = Math.max(1, Math.floor(card.intervalDays * 0.5) || 1);
-      return {
+      updated = {
         ...card,
         intervalDays,
         dueAt: now + intervalDays * DAY,
         repetitions: card.repetitions + 1,
       };
+      break;
     }
     case "good": {
       const intervalDays =
         card.intervalDays === 0
           ? 1
           : Math.min(365, Math.floor(card.intervalDays * 2) + 1);
-      return {
+      updated = {
         ...card,
         intervalDays,
         dueAt: now + intervalDays * DAY,
         repetitions: card.repetitions + 1,
       };
+      break;
     }
   }
+  return { ...updated, lastReviewedAt: now, lastReviewMode: "scheduled" };
 }
 
 export function createFlashcard(input: {
